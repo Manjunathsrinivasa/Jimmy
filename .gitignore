@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets — never commit these
+.env
+backend/prisma/.env
+*.env.local
+
+# Node
+node_modules/
+
+# Local scratch files from testing
+token.txt
+pipeline-id.txt
+server.log
+server.err.log
+
+# OS / editor
+.DS_Store
+Thumbs.db

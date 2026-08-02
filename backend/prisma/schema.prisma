@@ -1,0 +1,283 @@
+// Prisma schema for YoJan — project management tool
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  admin
+  manager
+  contributor
+  approver
+  viewer
+}
+
+enum Tier {
+  free
+  individual
+  enterprise
+}
+
+enum PipelineStatus {
+  draft
+  published
+  archived
+}
+
+enum NodeType {
+  start
+  stage
+  parallel_fork
+  parallel_join
+  decision
+  approval
+  end
+}
+
+enum FieldType {
+  text
+  textarea
+  number
+  currency
+  date
+  dropdown
+  multiselect
+  file
+  user_picker
+  checkbox
+}
+
+enum ProjectStageStatus {
+  pending
+  in_progress
+  blocked
+  approved
+  rejected
+  done
+}
+
+model Organization {
+  id         String       @id @default(cuid())
+  name       String
+  // Admin-defined sidebar navigation order: JSON array of page keys
+  // (overview, pipelines, approvals, reports, users, new_project). Null means
+  // the default order. Applied org-wide so every user sees the same order.
+  navOrder   Json?
+  // Admin-defined overview card order: JSON array of stat keys (tasks,
+  // approvals, projects, done). Null means the default order. Applied
+  // org-wide so every user's portal home shows the same arrangement.
+  overviewOrder Json?
+  users      User[]
+  pipelines  Pipeline[]
+  projects   Project[]
+  developers Developer[]
+  reports    Report[]
+}
+
+model User {
+  id             String  @id @default(cuid())
+  email          String  @unique
+  passwordHash   String
+  role           Role
+  tier           Tier
+  organizationId String
+  // Per-user page access. JSON array of page keys (overview, pipelines,
+  // reports, users, new_project). Null / empty means all pages allowed.
+  pageAccess     Json?
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  comments       Comment[]
+  managedProjects Project[] @relation("ProjectManager")
+  assignedStages ProjectStage[] @relation("StageAssignee")
+  approvedStages ProjectStage[] @relation("StageApprover")
+  createdReports Report[] @relation("ReportCreator")
+  reportAccess   ReportViewer[]
+}
+
+model Pipeline {
+  id              String   @id @default(cuid())
+  name            String
+  organizationId  String
+  status          PipelineStatus @default(draft)
+  createdAt       DateTime @default(now())
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  versions        PipelineVersion[]
+  reports         Report[]
+}
+
+model PipelineVersion {
+  id           String   @id @default(cuid())
+  pipelineId   String
+  versionNumber Int
+  createdAt    DateTime @default(now())
+  pipeline     Pipeline @relation(fields: [pipelineId], references: [id])
+  nodes        Node[]
+  edges        Edge[]
+  projects     Project[]
+}
+
+model Node {
+  id                String @id @default(cuid())
+  pipelineVersionId String
+  type              NodeType
+  label             String
+  positionX         Float
+  positionY         Float
+  config            Json?
+  pipelineVersion   PipelineVersion @relation(fields: [pipelineVersionId], references: [id])
+  fields            FieldDefinition[]
+  stages            ProjectStage[]
+  sourceEdges       Edge[] @relation("EdgeSource")
+  targetEdges       Edge[] @relation("EdgeTarget")
+}
+
+model Edge {
+  id                String @id @default(cuid())
+  pipelineVersionId String
+  sourceNodeId      String
+  targetNodeId      String
+  label             String?
+  pipelineVersion   PipelineVersion @relation(fields: [pipelineVersionId], references: [id])
+  sourceNode        Node @relation("EdgeSource", fields: [sourceNodeId], references: [id])
+  targetNode        Node @relation("EdgeTarget", fields: [targetNodeId], references: [id])
+}
+
+model FieldDefinition {
+  id        String @id @default(cuid())
+  nodeId    String
+  label     String
+  fieldType FieldType
+  required  Boolean @default(false)
+  order     Int
+  config    Json?
+  node      Node @relation(fields: [nodeId], references: [id])
+  values    FieldValue[]
+}
+
+model Developer {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  employeeId     String
+  name           String
+  email          String
+  phone          String?
+  department     String?
+  designation    String?
+  skills         String?
+  experience     Float?
+  costPerHour    Float?
+  location       String?
+  manager        String?
+  availability   String   @default("available")
+  notes          String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  projects       ProjectDeveloper[]
+  stages         ProjectStage[]
+}
+
+model Project {
+  id                String @id @default(cuid())
+  name              String
+  pipelineVersionId String
+  managerId         String
+  organizationId    String
+  client            String?
+  budget            Float?
+  startDate         DateTime?
+  endDate           DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime? @updatedAt
+  pipelineVersion   PipelineVersion @relation(fields: [pipelineVersionId], references: [id])
+  manager           User @relation("ProjectManager", fields: [managerId], references: [id])
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  stages            ProjectStage[]
+  developers        ProjectDeveloper[]
+}
+
+model ProjectDeveloper {
+  id          String    @id @default(cuid())
+  projectId   String
+  developerId String
+  project     Project   @relation(fields: [projectId], references: [id])
+  developer   Developer @relation(fields: [developerId], references: [id])
+
+  @@unique([projectId, developerId])
+}
+
+model ProjectStage {
+  id          String            @id @default(cuid())
+  projectId   String
+  nodeId      String
+  status      ProjectStageStatus @default(pending)
+  assigneeId  String?
+  developerId String?
+  // The user picked to approve an approval-type stage ("send for approval").
+  // Until they decide, the stage waits; "approved" advances the workflow and
+  // "rejected" lets the sender resend to a (different) approver.
+  approverId  String?
+  dueDate     DateTime?
+  updatedAt   DateTime? @updatedAt
+  project     Project @relation(fields: [projectId], references: [id])
+  node        Node   @relation(fields: [nodeId], references: [id])
+  assignee    User?  @relation("StageAssignee", fields: [assigneeId], references: [id])
+  approver    User?  @relation("StageApprover", fields: [approverId], references: [id])
+  developer   Developer? @relation(fields: [developerId], references: [id])
+  values      FieldValue[]
+  comments    Comment[]
+}
+
+model FieldValue {
+  id                String          @id @default(cuid())
+  projectStageId    String
+  fieldDefinitionId String
+  value             Json
+  projectStage      ProjectStage @relation(fields: [projectStageId], references: [id])
+  fieldDefinition   FieldDefinition @relation(fields: [fieldDefinitionId], references: [id])
+}
+
+model Comment {
+  id             String   @id @default(cuid())
+  projectStageId String
+  userId         String
+  text           String
+  createdAt      DateTime @default(now())
+  projectStage   ProjectStage @relation(fields: [projectStageId], references: [id])
+  user           User      @relation(fields: [userId], references: [id])
+}
+
+// Saved report: a named, shareable report definition scoped to a pipeline.
+// `columns` is a JSON array of { key, label, kind } where kind is "project"
+// (a built-in project column) or "field" (a pipeline fieldDefinitionId from
+// the report's pipeline). The creator plus the users granted access via
+// ReportViewer can open it.
+model Report {
+  id             String         @id @default(cuid())
+  organizationId String
+  pipelineId     String?
+  name           String
+  description    String?
+  columns        Json
+  createdById    String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  pipeline       Pipeline?      @relation(fields: [pipelineId], references: [id])
+  createdBy      User           @relation("ReportCreator", fields: [createdById], references: [id])
+  viewers        ReportViewer[]
+}
+
+model ReportViewer {
+  id       String @id @default(cuid())
+  reportId String
+  userId   String
+  report   Report @relation(fields: [reportId], references: [id])
+  user     User   @relation(fields: [userId], references: [id])
+
+  @@unique([reportId, userId])
+}
